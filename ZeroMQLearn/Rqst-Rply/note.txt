@@ -1,0 +1,78 @@
+1. 字符串说明
+    考虑到有些语言在string后面会加入'\0'(如C)而有些却不会(如Python)
+    所以，ZMQ的字符串是有长度的，且传送时【不加结束符】
+
+ZeroMQ相关套接字：
+    创建和销毁套接字：zmq_socket(), zmq_close()
+    配置和读取套接字选项：zmq_setsockopt(), zmq_getsockopt()
+    为套接字建立连接：zmq_bind(), zmq_connect()
+    发送和接收消息：zmq_send(), zmq_recv()
+
+ZMQ连接不同于TCP
+    1）使用多种协议，inproc（进程内）、ipc（进程间）、tcp、pgm（广播）、epgm；
+    2）当客户端使用zmq_connect()时连接就已经建立了，并不要求该端点已有某个服务使用zmq_bind()进行了绑定；
+    3）连接是异步的，并由一组消息队列做缓冲；
+    4）连接会表现出某种消息模式，这是由创建连接的套接字类型决定的；
+    5）一个套接字可以有多个输入和输出连接；
+    6）ZMQ没有提供类似zmq_accept()的函数，因为当套接字绑定至端点时它就自动开始接受连接了；
+    7）应用程序无法直接和这些连接打交道，因为它们是被封装在ZMQ底层的。
+
+ZMQ传输数据不同于TCP
+    1）ZMQ套接字传输的是消息，而不是字节（TCP）或帧（UDP）。消息：一段指定长度的二进制数据块
+    2）ZMQ套接字在后台进行I/O操作，也就是说无论是接收还是发送消息，它都会先传送到一个本地的缓冲队列，这个内存队列的大小是可以配置的。
+    3）ZMQ套接字可以和多个套接字进行连接（如果套接字类型允许的话）。TCP协议只能进行点对点的连接，而ZMQ则可以进行一对多（类似于无线广播）、
+       多对多（类似于邮局）、多对一（类似于信箱），当然也包括一对一的情况。
+    4）MQ套接字可以发送消息给多个端点（扇出模型），或从多个端点中接收消息（扇入模型）
+
+    注意：发送是异步发送（必定是非阻塞）【消息会在一个内存队列中保存下来，并由后台的I/O线程异步地进行发送】
+
+I/O线程
+    ZMQ应用程序和传统应用程序的区别之一就是你不需要为每个套接字都创建一个连接。
+    如：当你需要向一千个订阅者发布消息时，使用一个套接字就可以了；
+    当你需要向二十个服务进程分发任务时，使用一个套接字就可以了；
+    当你需要从一千个网页应用程序中获取数据时，也是使用一个套接字就可以了。
+
+核心消息模式
+ZMQ的核心消息模式有：
+    1）请求-应答模式 将一组服务端和一组客户端相连，用于远程过程调用或任务分发。
+    2）发布-订阅模式 将一组发布者和一组订阅者相连，用于数据分发。
+    3）管道模式 使用扇入或扇出的形式组装多个节点，可以产生多个步骤或循环，用于构建并行处理架构。
+    4）排他对接模式 将两个套接字一对一地连接起来，这种模式应用场景很少
+
+ZMQ的消息：
+    1）创建和传递zmq_msg_t对象，而不是一组数据块；
+    2）读取消息时，先用zmq_msg_init()初始化一个空消息，再将其传递给zmq_recv()函数；
+    3）写入消息时，先用zmq_msg_init_size()来创建消息（同时也已初始化了一块内存区域），
+       然后用memcpy()函数将信息拷贝到该对象中，最后传给zmq_send()函数；
+    4）释放消息（并不是销毁）时，使用zmq_msg_close()函数，它会将对消息对象的引用删除，最终由ZMQ将消息销毁；
+    5）获取消息内容时需使用zmq_msg_data()函数；若想知道消息的长度，可以使用zmq_msg_size()函数；
+    6）zmq_msg_move()、zmq_msg_copy()、zmq_msg_init_data()函数，在充分理解手册中的说明之前，建议不好贸然使用。
+
+    //  从套接字中获取ZMQ字符串，并转换为C语言字符串
+static char *
+s_recv (void *socket) {
+    zmq_msg_t message;
+    zmq_msg_init (&message);
+    zmq_recv (socket, &message, 0);
+    int size = zmq_msg_size (&message);
+    char *string = malloc (size + 1);
+    memcpy (string, zmq_msg_data (&message), size);
+    zmq_msg_close (&message);
+    string [size] = 0;
+    return (string);
+}
+
+//  将C语言字符串转换为ZMQ字符串，并发送给套接字
+static int
+s_send (void *socket, char *string) {
+    int rc;
+    zmq_msg_t message;
+    zmq_msg_init_size (&message, strlen (string));
+    memcpy (zmq_msg_data (&message), string, strlen (string));
+    rc = zmq_send (socket, &message, 0);
+    assert (!rc);
+    zmq_msg_close (&message);
+    return (rc);
+}
+
+
