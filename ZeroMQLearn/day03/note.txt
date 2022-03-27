@@ -1,0 +1,5 @@
+1. REQ->ROUTER，会自动加入identity信封 [[identity] [空] [内容]]
+2. ROUTER->REQ
+    1）ROUTER必须被消息唤醒后才可以发送消息要不会出错
+    2）REQ在收到消息后会拆解信封，所以ROUTER在发送时需要自己手动构造信封
+    3）REQ只会接受identity是自己的消息
