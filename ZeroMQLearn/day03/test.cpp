@@ -10,14 +10,21 @@ using namespace std;
 int main(int argc, char *argv[]){
 
     zmq::context_t new_context(1);
-    zmq::socket_t worker(new_context, ZMQ_REQ);
+    zmq::socket_t worker(new_context, ZMQ_ROUTER);
     worker.setsockopt(ZMQ_IDENTITY, "worker1", 7);
     worker.bind("ipc://frontend.ipc");
 
     zmq::socket_t client(new_context, ZMQ_ROUTER);
+    client.setsockopt(ZMQ_IDENTITY, "worker2", 7);
     client.connect("ipc://frontend.ipc");
 
-    s_send(worker, "hello");
+    sleep(1);
+
+    s_sendmore(worker, "worker1");
+    s_sendmore(worker,"");
+    s_send(worker,"hello");
+
+    // s_send(worker, "hello");
 
     // std::string identity = s_recv(client);
     // s_recv(client);     //  Envelope delimiter
@@ -25,13 +32,11 @@ int main(int argc, char *argv[]){
 
     // std::cout << identity << std::endl;  
 
-    s_sendmore(client, "worker1");
-    s_sendmore(client, "");
-    s_send(client,"hello2");
+    // s_sendmore(client, "worker1");
+    // s_sendmore(client, "");
+    // s_send(client,"hello2");
 
-    // s_send(worker, "hello");
-
-    s_dump(worker);
+    s_dump(client);
 
     return 0;
 }

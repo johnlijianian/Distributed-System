@@ -24,11 +24,10 @@ void client_task() {
 
     while(1) {
         s_send(client, "HELLO");
-        char *reply = s_recv();
+        std::string reply = s_recv();
         if(!reply)
             break;
         printf ("Client: %s\n", reply);
-        free (reply);
         sleep (1);
     }
     // 删除client socket
@@ -49,7 +48,7 @@ void worker_task() {
     while(1) {
         char *address = s_recv(worker);
         {
-            char *empty = s_recv (worker);
+            char *empty = s_recv(worker);
             assert(empty == 0);
         }
         
@@ -79,7 +78,7 @@ int main(int argc, char *argv[]){
     //  准备上下文和套接字
     zmq::context_t context(1);
 
-    zmq::socket_t cloudfe(context, ZMQ_ROUTER); // fe收数据
+    zmq::socket_t cloudfe(context, ZMQ_ROUTER); 
     char* self_url;
     sprintf(self_url, "ipc://%s-cloud.ipc", self);
     cloudfe.setsockopt(ZMQ_IDENTITY, self, strlen(self));
@@ -88,7 +87,6 @@ int main(int argc, char *argv[]){
     //  将cloudbe连接至同伴代理的端点
     zmq::socket_t cloudbe(context, ZMQ_ROUTER); 
     zmq_setsocketopt(cloudbe, ZMQ_IDENTITY, self, strlen(self));
-
     for (int argn = 2; argn < argc; argn ++){
         char *peer = argv [argn];
         printf ("I: 正在连接至同伴代理 '%s' 的状态流后端\n", peer);
@@ -137,43 +135,70 @@ int main(int argc, char *argv[]){
     while(1) {
         //  Initialize poll set
         zmq::pollitem_t items[] = {
-                //  本地请求
-                { localfe, 0, ZMQ_POLLIN, 0 },
-                //  云端请求
-                { cloudfe, 0, ZMQ_POLLIN, 0 }
+            // 本地client请求
+            { localfe, 0, ZMQ_POLLIN, 0 },
+            // 云端client请求
+            { cloudfe, 0, ZMQ_POLLIN, 0 }
+            // 本地worker信息
+            { localbe, 0, ZMQ_POLLIN, 0 },
         };
 
-        int rc = zmq::poll(items, 2, -1);
-        assert(rc>=0)
+        // 判断队列中是否有worker
+        if(worker_queue.size()){ // 仍有worker
+            zmq::poll(&items[0], 3, -1); 
+        } else { // 如果没有worker只关心本地worker信息
+            zmq::poll(&items[2], 1, -1);
+        }
 
-        int reroutable = 0;
-        //  优先处理同伴代理的请求，避免资源耗尽
-        if (frontends [1].revents & ZMQ_POLLIN) {
-
-            worker_queue.push(s_recv (cloudfe));
-
+        // 本地client请求
+        if (items[0].revents & ZMQ_POLLIN){
+            std::string client_addr = s_recv(localfe);
             {
-                //  Second frame is empty
-                std::string empty = s_recv(cloudfe);
+                std::string empty = s_recv(localfe);
                 assert(empty.size() == 0);
             }
+            std::string request = s_recv(localfe); // client发送的"Hello"
 
+            std::string worker_addr = worker_queue.front();//worker_queue [0];
+            worker_queue.pop();
+
+            s_sendmore(localbe, worker_addr);
+            s_sendmore(localbe, "");
+            s_sendmore(localbe, client_addr);
+            s_sendmore(localbe, "");
+            s_send(localbe, request);
+        }
+        // 云端client请求
+        else if (items[1].revents & ZMQ_POLLIN){
+
+        }
+        // 本地worker信息
+        else if (items[2].revents & ZMQ_POLLIN){
+            worker_queue.push(s_recv(localbe));
+            {
+                //  Second frame is empty
+                std::string empty = s_recv(localbe);
+                assert(empty.size() == 0);
+            }
             //  Third frame is READY or else a client reply address
-            std::string cloud_addr = s_recv(cloudfe);
-        } else { 
-            // 本地请求
-            if (frontends [0].revents & ZMQ_POLLIN) {
-                msg = s_recv (localfe);
-                reroutable = 1;
-            } else { // 无请求
-                break;
+            std::string client_addr = s_recv(localbe);
+
+            if (client_addr.compare("READY") != 0) {
+                {
+                    std::string empty = s_recv(localbe);
+                    assert(empty.size() == 0);
+                }
+                
+                std::string reply = s_recv(localbe); // 等待worker发送处理完成的消息
+                s_sendmore(localfe, client_addr); 
+                s_sendmore(localfe, "");
+                s_send(localfe, reply); // 将worker的信息发送出去
+
+                // if (--client_nbr == 0)
+                //     break;
             }
         }
 
-        if(reroutable && argc > 2 && randof (5) == 0) {
-            //  随地地路由给同伴代理
-            int random_peer = randof (argc - 2) + 2;
-        }
 
 
         
