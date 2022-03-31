@@ -105,6 +105,13 @@ class Serializer{
         template<typename T>
         Serializer &operator >> (T& i){
             output_type(i);
+            return *this;
+        }
+
+        template<typename T>
+        Serializer &operator << (T i) {
+            input_type(i);
+            return *this;
         }
 
     private:
@@ -128,16 +135,46 @@ inline void Serializer::output_type(T& t){
 
 template<>
 inline void Serializer::output_type(std::string& in){
-
+    int marklen = sizeof(uint16_t);
+    char *d = new char[marklen];
+    memcpy(d, m_iodevice.current(), marklen);
+    byte_orser(d, marklen);
+    int len = *reinterpret_cast<uint16_t*>(&d[0]);
+    m_iodevice.offset(marklen);
+    delete [] d;
+    if (len == 0) return;
+    in.insert(in.beggin(), m_iodevice.current(), m_iodevice.current() + len);
+    m_iodevice.offset(len);
 }
 
 template<typename T>
 inline void Serializer::input_type(T t) {
     int len = sizeof(T);
     char *d = new char[len];
-    const char *p = reinterpret_cast<const char *>(&t);
-    memcpy(d, p, len);
-    byte_orser(d, len);
+    const char *p = reinterpret_cast<const char *>(&t);  // 得到t的地址
+    memcpy(d, p, len); // 将p所指向的数据复制到d所指的位置
+    byte_orser(d, len); // 更改大小端
     m_iodevice.input(d, len);
     delete [] d;
+}
+
+template <>
+inline void Serializer::input_type(std::string in) {
+    // 长度字符串长度
+    uint16_t len = in.size();
+    char *p = reinterpret_cast< char * >(&len);
+    byte_orser(p, sizeof(uint16_t));
+    m_iodevice.input(p, sizeof(uint16_t));
+
+    // 存入字符串
+    if (len == 0) return;
+    char *d = new char[len];
+    memcpy(d, in.c_str(), len);
+    m_iodevice.input(d, len);
+    delete [] d;
+}
+
+template<>
+inline void Serializer::input_type(const char* in) {
+    input_type<std::string>(std::string(in));
 }
