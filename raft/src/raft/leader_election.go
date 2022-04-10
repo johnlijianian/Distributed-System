@@ -12,6 +12,16 @@ func (rf *Raft) resetElectionTimer() {
 	rf.electionTime = t.Add(electionTimeout)
 }
 
+func (rf *Raft) setNewTerm(term int) {
+	if term > rf.currentTerm || rf.currentTerm == 0 {
+		rf.state = Follow
+		rf.currentTerm = term
+		rf.votedFor = -1
+		DPrintf("[%d]: set term %v\n", rf.me, rf.currentTerm)
+		// rf.persist()
+	}
+}
+
 func (rf *Raft) leaderElection() {
 	rf.currentTerm++
 	rf.state = Candidate
