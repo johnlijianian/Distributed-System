@@ -25,7 +25,7 @@ func (rf *Raft) appendEntries(heartbeat bool) {
 
 	for peer, _ := range rf.peers {
 		if peer == rf.me {
-			rf.resetElectionTimer()
+			rf.resetElectionTimer() // student guide (b)
 			continue
 		}
 
@@ -73,7 +73,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.Term < rf.currentTerm {
 		return
 	}
-	rf.resetElectionTimer()
+	rf.resetElectionTimer() // student guide(a)， 先判断发送的请求是否过期
 
 	// candidate rule 3
 	if rf.state == Candidate {
@@ -148,8 +148,62 @@ func (rf *Raft) leaderSendEntries(serverId int, args *AppendEntriesArgs) {
 			match := args.PrevLogIndex + len(args.Entries)
 			next := match + 1
 			rf.nextIndex[serverId]
+		} else if reply.Conflict {
+			if reply.Term == -1 { // Term不同, 回复者的Term小于leader的Term
+				rf.nextIndex[serverId] = reply.XLen
+			} else {
+				LastLogInXTerm := rf.findLastLogInTerm(reply.XTerm)
+				if LastLogInXTerm > 0 {
+					rf.nextIndex[serverId] = LastLogInXTerm
+				} else {
+					rf.nextIndex[serverId] = reply.XIndex
+				}
+			}
+
+			DPrintf("[%v]: leader nextIndex[%v] %v", rf.me, serverId, rf.nextIndex[serverId])
+		} else if rf.nextIndex[serverId] > 1{ // 有些问题
+			rf.nextIndex[serverId]--
+		}
+		rf.leaderCommitRule()
+	}
+}
+
+func (rf *Raft) leaderCommitRule() {
+	// leader rule 4
+	if rf.state != Leader {
+		return 
+	}
+
+	for n := rf.commitIndex + 1; n <= rf.log.lastLog().Index; n++ {
+		if rf.log.at(n).Term != rf.currentTerm {
+			continue
+		}
+		counter := 1
+		for serverId := 0; serverId < len(rf.peers); serverId++ {
+			if serverId != rf.me && rf.matchIndex[serverId] >= n {
+				counter++
+			} 
+
+			if counter > len(rf.peers) / 2 {
+				rf.commitIndex = n
+				DPrintf("[%v] leader尝试提交 index %v", rf.me, rf.commitIndex)
+				rf.apply()
+				break
+			}
 		}
 	}
+}
+
+func (rf *Raft) findLastLogInTerm(x int) int {
+	for i := rf.log.lastLog().Index; i > 0; i -- {
+		term := rf.log.at(i).Term
+		if term == x {
+			return i
+		} else if term < x {
+			break
+		}
+	}
+	return -1
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {

@@ -152,12 +152,22 @@ func (rf *Raft) readPersist(data []byte) {
 // the leader.
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.state != Leader {
+		return -1, rf.currentTerm, false
+	}
+	index := rf.log.lastLog().Index + 1
+	term := rf.currentTerm
 
-	// Your code here (2B).
-
+	log := Entry {
+		Command: command,
+		Index: index,
+		Term: term,
+	}
+	rf.log.append(log)
+	rf.persist()
+	rf.appendEntries(false)
 
 	return index, term, isLeader
 }
@@ -224,8 +234,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	go rf.applier() // 用来将command应用到state machine
 
-
-
 	return rf
 }
 
@@ -248,4 +256,41 @@ func (rf *Raft) ticker() {
 		rf.mu.Unlock()
 
 	}
+}
+
+func (rf *Raft) apply() {
+	rf.applyCond.Broadcast()
+	DPrintf("[%v]: rf.applyCond.Broadcast()", rf.me)
+}
+
+func (rf *Raft) applier() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	for !rf.killed() {
+		// all server rule 1
+		if rf.commitIndex > rf.lastApplied && rf.log.lastLog().Index > rf.lastApplied {
+			rf.lastApplied++
+			applyMsg := ApplyMsg {
+				CommandValid: true,
+				Command: rf.log.at(rf.lastApplied).Command,
+				CommandIndex: rf.lastApplied,
+			}
+			DPrintfVerbose("[%v]: COMMIT %d: %v", rf.me, rf.lastApplied, rf.commits())
+			rf.mu.Unlock()
+			rf.applyCh <- applyMsg
+			rf.mu.Lock()
+		} else {
+			rf.applyCond.Wait()
+			DPrintf("[%v]: rf.applyCond.Wait()", rf.me)
+		}
+	}
+}
+
+func (rf *Raft) commits() string {
+	nums := []string{}
+	for i := 0; i <= rf.lastApplied; i++ {
+		nums = append(nums, fmt.Sprintf("%4d", rf.log.at(i).Command))
+	}
+	return fmt.Sprintf(string.Join(nums, "|"))
 }
